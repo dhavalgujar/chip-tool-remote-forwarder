@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Matter's static data in PSRAM (with SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY):
+# esp-matter's library, and this component's, which holds esp-matter's
+# controller singletons. CMakeLists.txt fills in this component's archive name.
+[mapping:esp32_matter_gateway]
+archive: lib@COMPONENT_NAME@.a
+entries:
+    if ESP_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)
+
+[mapping:esp32_matter_gateway_esp_matter]
+archive: libespressif__esp_matter.a
+entries:
+    if ESP_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)

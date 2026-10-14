@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+
+version: "0.1.0"
+description: "A Matter gateway for chip-tool-gw: chip-tool reaches the home's Matter devices through this device"
+url: "https://github.com/dhavalgujar/esp32-matter-gateway"
+repository: "https://github.com/dhavalgujar/esp32-matter-gateway.git"
+license: "Apache-2.0"
+targets:
+  - esp32s3
+  - esp32c5
+dependencies:
+  idf:
+    version: ">=6.0"
+  espressif/cjson:
+    version: "~1.7"
+  espressif/esp_matter:
+    version: "~1.6.0"
