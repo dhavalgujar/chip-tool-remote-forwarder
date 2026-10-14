@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+
+menu "Matter gateway example"
+
+    config EXAMPLE_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+        help
+            The network the gateway joins. The Matter devices it commissions
+            join it too, unless they're Thread devices.
+
+    config EXAMPLE_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+
+endmenu
