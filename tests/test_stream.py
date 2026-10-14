@@ -76,14 +76,6 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def secret_file(name: str, secret: bytes) -> str:
-    """mgw-host's secret (gateway serve SECRET-FILE)."""
-    p = TMP / name
-    p.write_text(secret.hex() + "\n")
-    p.chmod(0o600)
-    return str(p)
-
-
 def connect_file(name: str, payload: dict) -> str:
     p = TMP / name
     p.write_text(json.dumps(payload))
@@ -625,15 +617,14 @@ class ConnectFile(unittest.TestCase):
         self.assertIn("can't read MATTER_GW_CONNECT_FILE", out)
 
     def test_mgw_sh(self):
-        # The release layout: bin/chip-tool-gw, mgw.sh, connect.json; no copy of
-        # the secret is left (an older version's secret.hex is removed).
+        # The release layout: bin/chip-tool-gw, mgw.sh, connect.json; mgw.sh
+        # makes no copy of the secret.
         d = TMP / "mgw"
         (d / "bin").mkdir(parents=True, exist_ok=True)
         if not (d / "bin/chip-tool-gw").exists():
             (d / "bin/chip-tool-gw").symlink_to(CLIENT)
         shutil.copy(ROOT / "chip-tool-gw/mgw.sh", d / "mgw.sh")
         connect_file("mgw/connect.json", self.payload)
-        (d / "secret.hex").write_text(SECRET.hex() + "\n")
         for env in ({"MGW_VIA_PROXY": "0"},
                     {"HTTPS_PROXY": f"http://agent:pw-123@127.0.0.1:1", "MGW_PROXY_PORT": str(self.proxy.port)}):
             rc, out = run_env([str(d / "mgw.sh"), "gateway", "call", "matter.gateway_status"], env)
@@ -641,7 +632,6 @@ class ConnectFile(unittest.TestCase):
             self.assertEqual(call_line(out)["payload"], {"name": "matter.gateway_status"})
             self.assertNotIn(SECRET.hex(), out)
             self.assertNotIn("pw-123", out)
-        self.assertFalse((d / "secret.hex").exists())
         self.assertEqual(sorted(p.name for p in d.iterdir()), ["bin", "connect.json", "mgw.sh", "storage"])
 
 
@@ -699,9 +689,9 @@ class MgwHost(unittest.TestCase):
         store = TMP / "host"
         store.mkdir(exist_ok=True)
         cls.log = open(TMP / "mgw-host.log", "w+")
-        cls.p = subprocess.Popen([str(HOST_BIN), "gateway", "serve", secret_file("h", SECRET),
-                                  "--tcp-port", str(cls.port), "--stats-interval", "0", "--storage-directory",
-                                  str(store)], stdout=cls.log, stderr=subprocess.STDOUT)
+        conn = connect_file("host.json", {"endpoint": f"127.0.0.1:{cls.port}", "secret": SECRET.hex()})
+        cls.p = subprocess.Popen([str(HOST_BIN), "gateway", "serve", conn, "--stats-interval", "0",
+                                  "--storage-directory", str(store)], stdout=cls.log, stderr=subprocess.STDOUT)
         deadline = time.time() + 30
         while "gateway serve: fabric index" not in (TMP / "mgw-host.log").read_text():
             if time.time() > deadline or cls.p.poll() is not None:
@@ -722,6 +712,23 @@ class MgwHost(unittest.TestCase):
         # mgw-host relays sessions only: no gateway commands
         rc, out, _ = client("gateway call matter.gateway_status", f"127.0.0.1:{self.port}", SECRET)
         self.assertEqual(call_line(out)["error"]["code"], "unsupported", out[-1500:])
+
+    def test_refuses_a_bad_connect_file(self):
+        store = TMP / "host-bad"
+        store.mkdir(exist_ok=True)
+        for name, text, want in (
+                ("host-missing.json", None, "can't read the connect file"),
+                ("host-no-port.json", json.dumps({"endpoint": "127.0.0.1", "secret": SECRET.hex()}),
+                 "the connect file's endpoint must be host:port"),
+                ("host-short.json", json.dumps({"endpoint": "127.0.0.1:1", "secret": "00" * 8}),
+                 "the secret in the connect file must be 32-128 hex digits")):
+            if text is not None:
+                (TMP / name).write_text(text)
+            rc, out = run_env([str(HOST_BIN), "gateway", "serve", str(TMP / name), "--stats-interval", "0",
+                               "--storage-directory", str(store)], {})
+            self.assertNotEqual(rc, 0, f"{name}: {out[-1500:]}")
+            self.assertIn(want, out, name)
+            self.assertNotIn(SECRET.hex(), out, name)
 
     def test_wrong_secret(self):
         rc, out, _ = client("gateway call matter.gateway_status", f"127.0.0.1:{self.port}",

@@ -16,8 +16,8 @@ public:
     GatewayServeCommand(CredentialIssuerCommands * credsIssuerConfig) :
         CHIPCommand("serve", credsIssuerConfig, "Relay Matter sessions from cloud controllers to this controller's nodes.")
     {
-        AddArgument("secret-file", &mSecretFile, "The per-gateway secret: 32+ hex digits or 16-64 raw bytes.");
-        AddArgument("tcp-port", 0, UINT16_MAX, &mTcpPort, "TCP port for cloud controllers (default 7401).");
+        AddArgument("connect-file", &mConnectFile,
+                    "matter.connect's payload, as JSON: the secret, and the endpoint whose port this listens on.");
         AddArgument("stats-interval", 0, UINT16_MAX, &mStatsInterval, "Seconds between stats lines (default 60, 0: off).");
     }
 
@@ -27,8 +27,7 @@ public:
 private:
     static void LogStats(chip::System::Layer * layer, void * context);
 
-    char * mSecretFile = nullptr;
-    chip::Optional<uint16_t> mTcpPort;
+    char * mConnectFile = nullptr;
     chip::Optional<uint16_t> mStatsInterval;
 };
 

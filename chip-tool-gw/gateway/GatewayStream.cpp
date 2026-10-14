@@ -15,19 +15,15 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <ctype.h>
-#include <fstream>
-#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <thread>
 
-#include <json/json.h>
 #include <lib/support/logging/CHIPLogging.h>
 
 #include "GatewayDial.h"
-#include "GatewaySecretFile.h"
+#include "GatewayConnectFile.h"
 #include "mgw_keys.h"
 #include "mgw_proto.h"
 #include "mgw_tls.h"
@@ -50,47 +46,6 @@ std::string Env(const char * name)
 {
     const char * v = getenv(name);
     return v ? v : "";
-}
-
-void Wipe(std::string & s)
-{
-    std::fill(s.begin(), s.end(), '\0');
-}
-
-// matter.connect's payload, as saved: {"endpoint": "host:port", "secret": "<hex>", ...}.
-bool ReadConnectFile(const std::string & path, std::string & endpoint, uint8_t * secret, size_t cap, size_t & len,
-                     std::string & why)
-{
-    std::ifstream f(path, std::ios::binary);
-    if (!f)
-    {
-        why = "can't read MATTER_GW_CONNECT_FILE (" + path + ")";
-        return false;
-    }
-    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    Json::Value v;
-    std::string err;
-    std::unique_ptr<Json::CharReader> reader(Json::CharReaderBuilder().newCharReader());
-    bool parsed = text.size() <= 16384 && reader->parse(text.data(), text.data() + text.size(), &v, &err);
-    Wipe(text);
-    if (!parsed || !v.isObject() || !v.isMember("endpoint") || !v["endpoint"].isString() || !v.isMember("secret") ||
-        !v["secret"].isString())
-    {
-        why = "MATTER_GW_CONNECT_FILE must be matter.connect's payload: a JSON object with endpoint and secret";
-        return false;
-    }
-    endpoint       = v["endpoint"].asString();
-    std::string hx = v["secret"].asString();
-    v              = Json::Value();
-    bool hex       = !hx.empty() && std::all_of(hx.begin(), hx.end(), [](char c) { return isxdigit(c) != 0; });
-    len            = hex ? ParseSecret(reinterpret_cast<const uint8_t *>(hx.data()), hx.size(), secret, cap) : 0;
-    Wipe(hx);
-    if (len < mgw::kMinSecretLen)
-    {
-        why = "the secret in MATTER_GW_CONNECT_FILE must be 32-128 hex digits";
-        return false;
-    }
-    return true;
 }
 
 } // namespace
@@ -201,7 +156,7 @@ void GatewayStream::Impl::Configure()
         target   = target.substr(6);
     }
     std::string endpoint, why;
-    if (!ReadConnectFile(connect, endpoint, secret, sizeof(secret), secretLen, why))
+    if (!ReadConnectFile(connect, "MATTER_GW_CONNECT_FILE", endpoint, secret, sizeof(secret), secretLen, why))
     {
         SetError(why);
         return;

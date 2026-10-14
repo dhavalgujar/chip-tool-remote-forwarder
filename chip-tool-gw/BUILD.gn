@@ -23,7 +23,7 @@ executable("chip-tool-gw") {
     "gateway/GatewayClient.cpp",
     "gateway/GatewayCommands.cpp",
     "gateway/GatewayDial.cpp",
-    "gateway/GatewaySecretFile.cpp",
+    "gateway/GatewayConnectFile.cpp",
     "gateway/GatewaySessions.cpp",
     "gateway/GatewaySigner.cpp",
     "gateway/GatewayStream.cpp",
@@ -45,7 +45,7 @@ executable("mgw-host") {
     "core/mgw_relay.cpp",
     "core/mgw_server.cpp",
     "core/mgw_tls_openssl.cpp",
-    "gateway/GatewaySecretFile.cpp",
+    "gateway/GatewayConnectFile.cpp",
     "gateway/GatewayServeCommand.cpp",
     "mgw_host_main.cpp",
   ]

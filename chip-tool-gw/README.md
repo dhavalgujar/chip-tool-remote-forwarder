@@ -78,5 +78,7 @@ below.
 
 ## Tests
 
-`mgw-host gateway serve SECRET-FILE` runs the relay on a host, against devices
-on the same network, for testing the client without an ESP32.
+`mgw-host gateway serve CONNECT-FILE` runs the relay on a host, against devices
+on the same network, for testing the client without an ESP32. CONNECT-FILE is
+a `connect.json` like the gateway's: the secret, and the endpoint whose port it
+listens on.

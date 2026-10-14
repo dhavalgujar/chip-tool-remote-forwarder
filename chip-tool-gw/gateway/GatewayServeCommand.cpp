@@ -2,14 +2,17 @@
 
 #include "GatewayServeCommand.h"
 
+#include <stdlib.h>
 #include <string.h>
+
+#include <string>
 
 #include <thread>
 
 #include <controller/CHIPDeviceControllerFactory.h>
 #include <platform/CHIPDeviceLayer.h>
 
-#include "GatewaySecretFile.h"
+#include "GatewayConnectFile.h"
 #include "mgw_relay.h"
 #include "mgw_server.h"
 
@@ -22,6 +25,17 @@ bool SpawnThread(void (*fn)(void *), void * arg, const char * name, size_t stack
 }
 
 uint32_t sStatsInterval = 60;
+
+// The port of a host:port (or [v6]:port) endpoint; 0 if there is none.
+uint16_t EndpointPort(const std::string & endpoint)
+{
+    size_t colon = endpoint.rfind(':');
+    if (colon == std::string::npos || colon + 1 == endpoint.size())
+        return 0;
+    char * end    = nullptr;
+    unsigned long p = strtoul(endpoint.c_str() + colon + 1, &end, 10);
+    return (*end == '\0' && p > 0 && p <= UINT16_MAX) ? static_cast<uint16_t>(p) : 0;
+}
 
 } // namespace
 
@@ -49,15 +63,22 @@ void GatewayServeCommand::LogStats(chip::System::Layer * layer, void * context)
 CHIP_ERROR GatewayServeCommand::RunCommand()
 {
     mgw::ServerConfig sc;
-    sc.secretLen = GatewayClient::ReadSecretFile(mSecretFile, sc.secret, sizeof(sc.secret));
-    VerifyOrReturnError(sc.secretLen >= mgw::kMinSecretLen, CHIP_ERROR_INVALID_ARGUMENT,
-                        ChipLogError(chipTool, "gateway serve: the secret must be 32-128 hex digits or 16-64 raw bytes"));
+    std::string endpoint, why;
+    if (!GatewayClient::ReadConnectFile(mConnectFile, "the connect file", endpoint, sc.secret, sizeof(sc.secret), sc.secretLen,
+                                        why))
+    {
+        memset(sc.secret, 0, sizeof(sc.secret));
+        ChipLogError(chipTool, "gateway serve: %s", why.c_str());
+        return CHIP_ERROR_INVALID_ARGUMENT;
+    }
+    sc.port = EndpointPort(endpoint);
+    VerifyOrReturnError(sc.port != 0, CHIP_ERROR_INVALID_ARGUMENT,
+                        ChipLogError(chipTool, "gateway serve: the connect file's endpoint must be host:port"));
 
     auto * state = chip::Controller::DeviceControllerFactory::GetInstance().GetSystemState();
     VerifyOrReturnError(state != nullptr && state->TransportMgr() != nullptr, CHIP_ERROR_INCORRECT_STATE);
     // DeviceTransportMgr: [0] UDP over IPv6, [1] UDP over IPv4 (same port).
     sc.chipUdpPort = state->TransportMgr()->GetTransport().GetImplAtIndex<1>().GetBoundPort();
-    sc.port        = mTcpPort.ValueOr(mgw::kDefaultPort);
     sc.spawn       = SpawnThread;
 
     mgw::Relay::Config rc;

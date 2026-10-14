@@ -26,7 +26,6 @@ here=$(cd "$(dirname "$0")" && pwd)
 conn=${MGW_CONNECT_FILE:-$here/connect.json}
 [ -r "$conn" ] || { echo "mgw: save matter.connect's payload as $conn (mode 600)" >&2; exit 2; }
 export MATTER_GW_CONNECT_FILE=$conn
-rm -f "$here/secret.hex"   # the copy older versions of this script made
 if [ "${MGW_VIA_PROXY:-1}" = 1 ]; then
     export MATTER_GW=proxy
     # Never printed; set MATTER_GW_PROXY to override. HTTPS_PROXY with the
