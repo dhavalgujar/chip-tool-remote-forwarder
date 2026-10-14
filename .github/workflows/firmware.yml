@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# The component in the example app, for the ESP32-C5, and the host
+# tests of its pure-C parts and the stream protocol. The example is also built
+# with the component as a managed git dependency, as applications get it.
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  example:
+    name: Example (esp32c5)
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.1
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build
+        working-directory: examples/gateway
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          idf.py -B build -DIDF_TARGET=esp32c5 -DSDKCONFIG=build/sdkconfig build
+          idf.py -B build -DSDKCONFIG=build/sdkconfig size
+          python3 "$GITHUB_WORKSPACE/tests/check_psram_bss.py" build/matter_gateway_example.map
+
+      # The component manager names the component dhavalgujar__esp32_matter_gateway
+      # (its archive too): the example, with the component from this commit.
+      - name: Build as a managed component
+        env:
+          REPO: ${{ github.event.pull_request.head.repo.clone_url || format('{0}/{1}.git', github.server_url, github.repository) }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          app=$RUNNER_TEMP/app
+          cp -r examples/gateway "$app"
+          rm -rf "$app/build" "$app/managed_components" "$app/dependencies.lock"
+          sed -i '/EXTRA_COMPONENT_DIRS/d' "$app/CMakeLists.txt"
+          cat > "$app/main/idf_component.yml" <<EOF
+          dependencies:
+            dhavalgujar/esp32_matter_gateway:
+              git: "$REPO"
+              path: "components/esp32_matter_gateway"
+              version: "$SHA"
+          EOF
+          echo 'CONFIG_CHIP_PROJECT_CONFIG="managed_components/dhavalgujar__esp32_matter_gateway/CHIPProjectConfig.h"' \
+            > "$app/sdkconfig.managed"
+          cd "$app"
+          idf.py -B build -DIDF_TARGET=esp32c5 -DSDKCONFIG=build/sdkconfig \
+            -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.managed" build
+          python3 "$GITHUB_WORKSPACE/tests/check_psram_bss.py" build/matter_gateway_example.map
+
+      # cJSON's sources come from the build's managed components.
+      - name: Host tests
+        run: |
+          CJSON_SOURCE_DIR=examples/gateway/managed_components/espressif__cjson/cJSON \
+            python3 -m unittest discover -s tests -p 'test_host.py' -v

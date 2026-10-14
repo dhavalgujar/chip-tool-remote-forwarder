@@ -1,0 +1,173 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# chip-tool-gw and mgw-host against the pinned connectedhomeip, the stream
+# tests against them, and on a v* tag the release: chip-tool-gw-<tag>-linux-x86_64.tgz
+# (chip-tool-gw/package.sh) with its sha256.
+name: Linux
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # chip-tool-gw/build.sh is tested at this commit.
+  CHIP_SHA: 7d3dfb6c06b3cc696186f86d527b2f387a5603df
+
+jobs:
+  build:
+    name: Build chip-tool-gw
+    # On the stock image, not CHIP's build image: its OpenSSL 3.5 would make the
+    # binary refuse the OpenSSL 3.0 of Ubuntu 24.04 and of the VMs it runs in.
+    runs-on: ubuntu-24.04
+    steps:
+      # The checkout, its environment and the build take more than the image
+      # leaves free; these aren't used (as in CHIP's own CI).
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift && df -h /
+
+      # CHIP's Linux prerequisites (docs/guides/BUILDING.md)
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends git gcc g++ pkg-config cmake curl libssl-dev \
+            libdbus-1-dev libglib2.0-dev libavahi-client-dev ninja-build python3-venv python3-dev python3-pip \
+            unzip libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev
+
+      - uses: actions/checkout@v4
+        with:
+          path: gateway
+          persist-credentials: false
+
+      # The checkout with its Linux submodules and bootstrapped environment
+      # (several GB): once per CHIP commit.
+      - name: Restore connectedhomeip
+        id: chip
+        uses: actions/cache@v4
+        with:
+          path: connectedhomeip
+          key: connectedhomeip-${{ env.CHIP_SHA }}-ubuntu-24.04-1
+
+      - name: Check out and bootstrap connectedhomeip
+        if: steps.chip.outputs.cache-hit != 'true'
+        run: |
+          git init -q connectedhomeip
+          cd connectedhomeip
+          git remote add origin https://github.com/project-chip/connectedhomeip.git
+          git fetch -q --depth 1 origin "$CHIP_SHA"
+          git checkout -q FETCH_HEAD
+          scripts/checkout_submodules.py --shallow --platform linux
+          # Sourced, as in CHIP's own CI (.github/actions/bootstrap)
+          source scripts/bootstrap.sh -p all,linux
+
+      - name: Build
+        run: gateway/chip-tool-gw/build.sh connectedhomeip "$PWD/out"
+
+      - name: Package
+        run: |
+          name=${GITHUB_REF_NAME//\//-}
+          [[ $GITHUB_REF == refs/tags/v* ]] || name=$(git -C gateway rev-parse --short HEAD)
+          # A release's tag is the component's version: the firmware names it
+          # as the client to use (matter.connect).
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            version=$(sed -n 's/^version: *"\(.*\)"/\1/p' gateway/components/esp32_matter_gateway/idf_component.yml)
+            [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "tag $GITHUB_REF_NAME, component version $version"; exit 1; }
+          fi
+          # The production PAA roots from the DCL, as of this build; if it can't
+          # be reached, connectedhomeip's copy (package.sh's default).
+          paa=""
+          for attempt in 1 2 3; do
+            rm -rf dcl-paa
+            if (source connectedhomeip/scripts/activate.sh > /dev/null &&
+                python3 connectedhomeip/credentials/fetch_paa_certs_from_dcl.py --use-main-net-http \
+                  --paa-trust-store-path "$PWD/dcl-paa" > dcl-paa.log); then
+              paa=$PWD/dcl-paa
+              break
+            fi
+            tail -2 dcl-paa.log
+            sleep 15
+          done
+          PAA_PRODUCTION=$paa gateway/chip-tool-gw/package.sh connectedhomeip out "$name" dist
+          mkdir -p dist/host && strip -o dist/host/mgw-host out/mgw-host
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chip-tool-gw
+          path: dist
+          retention-days: 14
+
+  test:
+    name: Stream tests
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # ssl's PSK callbacks need Python 3.13 or later.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: chip-tool-gw
+          path: dist
+
+      # The packaged binary runs with only its bundled lib/; mgw-host (for the
+      # tests only) needs the same libraries.
+      - name: Run the packaged chip-tool-gw
+        run: |
+          tar -C dist -xzf dist/chip-tool-gw-*-linux-x86_64.tgz
+          (cd dist && sha256sum -c chip-tool-gw-*-linux-x86_64.tgz.sha256)
+          bundle=$(ls -d dist/chip-tool-gw-*/)
+          LD_LIBRARY_PATH=$bundle/lib "$bundle/bin/chip-tool-gw" 2>&1 | head -5
+          ls "$bundle/paa" | wc -l
+
+      # The packaged chip-tool-gw, beside mgw-host (CHIP_TOOL_GW_OUT has both).
+      - name: Stream tests
+        run: |
+          bundle=$(ls -d "$PWD"/dist/chip-tool-gw-*/)
+          chmod +x dist/host/mgw-host
+          ln -sf "$bundle/bin/chip-tool-gw" dist/host/chip-tool-gw
+          LD_LIBRARY_PATH=$bundle/lib CHIP_TOOL_GW_OUT=$PWD/dist/host \
+            python -m unittest discover -s tests -p 'test_stream.py' -v
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: chip-tool-gw
+          path: dist
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tgz=$(ls dist/chip-tool-gw-*-linux-x86_64.tgz)
+          paa=$(tar -xzOf "$tgz" --wildcards '*/paa/SOURCE')
+          cat > notes.md <<EOF
+          - chip-tool-gw for Linux x86-64, built against connectedhomeip ${CHIP_SHA:0:8}.
+            Check the download with its .sha256.
+          - PAA roots: $paa.
+          - The component at this tag (components/esp32_matter_gateway) names this
+            release as its client in matter.connect.
+          EOF
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md "$tgz" "$tgz.sha256"
