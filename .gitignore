@@ -1,0 +1,11 @@
+# chip-tool-gw's build links (chip-tool-gw/build.sh)
+/chip-tool-gw/build_overrides
+/chip-tool-gw/third_party/
+/chip-tool-gw/core
+# IDF builds of the example
+/examples/*/build*/
+/examples/*/managed_components/
+/examples/*/dependencies.lock
+/examples/*/sdkconfig
+/examples/*/sdkconfig.old
+__pycache__/
