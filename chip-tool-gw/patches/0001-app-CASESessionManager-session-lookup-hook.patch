@@ -1,0 +1,68 @@
+diff --git a/src/app/CASESessionManager.cpp b/src/app/CASESessionManager.cpp
+index dd2fdcd1..4051c3f1 100644
+--- a/src/app/CASESessionManager.cpp
++++ b/src/app/CASESessionManager.cpp
+@@ -21,6 +21,8 @@
+ 
+ namespace chip {
+ 
++CASESessionManager::SessionLookupHook CASESessionManager::sSessionLookupHook = nullptr;
++
+ CHIP_ERROR CASESessionManager::Init(chip::System::Layer * systemLayer, const CASESessionManagerConfig & params)
+ {
+     ReturnErrorOnFailure(params.sessionInitParams.Validate());
+@@ -101,6 +103,26 @@ void CASESessionManager::FindOrEstablishSessionHelper(const ScopedNodeId & peerI
+     ChipLogDetail(CASESessionManager, "FindOrEstablishSession: PeerId = [%d:" ChipLogFormatX64 "]", peerId.GetFabricIndex(),
+                   ChipLogValueX64(peerId.GetNodeId()));
+ 
++    if (sSessionLookupHook != nullptr)
++    {
++        CHIP_ERROR hookErr = sSessionLookupHook(peerId);
++        if (hookErr != CHIP_NO_ERROR)
++        {
++            // The node is only reachable through the hook's gateway: fail now
++            // rather than try a CASE handshake that can't succeed.
++            if (onFailure != nullptr)
++            {
++                onFailure->mCall(onFailure->mContext, peerId, hookErr);
++            }
++            if (onSetupFailure != nullptr)
++            {
++                OperationalSessionSetup::ConnectionFailureInfo failureInfo(peerId, hookErr, SessionEstablishmentStage::kUnknown);
++                onSetupFailure->mCall(onSetupFailure->mContext, failureInfo);
++            }
++            return;
++        }
++    }
++
+     bool forAddressUpdate             = false;
+     OperationalSessionSetup * session = FindExistingSessionSetup(peerId, forAddressUpdate);
+     if (session == nullptr)
+diff --git a/src/app/CASESessionManager.h b/src/app/CASESessionManager.h
+index eac04cd3..fedc2623 100644
+--- a/src/app/CASESessionManager.h
++++ b/src/app/CASESessionManager.h
+@@ -185,6 +185,15 @@ public:
+     CHIP_ERROR GetPeerAddress(const ScopedNodeId & peerId, Transport::PeerAddress & addr,
+                               TransportPayloadCapability transportPayloadCapability = TransportPayloadCapability::kMRPPayload);
+ 
++    /**
++     * Called first in FindOrEstablishSession, by every CASESessionManager in the process. A controller that reaches nodes
++     * through a gateway that ends their sessions uses it to put a session in place, so that the lookup finds it
++     * and no CASE handshake runs. An error fails the request at once (the failure callbacks get it). Set it before the
++     * controller stack starts; nullptr removes it.
++     */
++    using SessionLookupHook = CHIP_ERROR (*)(const ScopedNodeId & peerId);
++    static void SetSessionLookupHook(SessionLookupHook hook) { sSessionLookupHook = hook; }
++
+     //////////// OperationalSessionReleaseDelegate Implementation ///////////////
+     void ReleaseSession(OperationalSessionSetup * device) override;
+ 
+@@ -208,6 +217,7 @@ private:
+                                       const Optional<AddressResolve::ResolveResult> & fallbackResolveResult = NullOptional);
+ 
+     CASESessionManagerConfig mConfig;
++    static SessionLookupHook sSessionLookupHook;
+ };
+ 
+ } // namespace chip
