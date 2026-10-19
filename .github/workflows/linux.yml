@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
-# chip-tool-gw and mgw-host against the pinned connectedhomeip, the stream
-# tests against them, and on a v* tag the release: chip-tool-gw-<tag>-linux-x86_64.tgz
-# (chip-tool-gw/package.sh) with its sha256.
+# chip-tool-remote and forwarder-host against the pinned connectedhomeip, the stream
+# tests against them, and on a v* tag the release: chip-tool-remote-<tag>-linux-x86_64.tgz
+# (chip-tool-remote/package.sh) with its sha256.
 name: Linux
 
 on:
@@ -20,12 +20,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # chip-tool-gw/build.sh is tested at this commit.
+  # chip-tool-remote/build.sh is tested at this commit.
   CHIP_SHA: 7d3dfb6c06b3cc696186f86d527b2f387a5603df
 
 jobs:
   build:
-    name: Build chip-tool-gw
+    name: Build chip-tool-remote
     # On the stock image, not CHIP's build image: its OpenSSL 3.5 would make the
     # binary refuse the OpenSSL 3.0 of Ubuntu 24.04 and of the VMs it runs in.
     runs-on: ubuntu-24.04
@@ -45,7 +45,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          path: gateway
+          path: forwarder
           persist-credentials: false
 
       # The checkout with its Linux submodules and bootstrapped environment
@@ -70,16 +70,16 @@ jobs:
           source scripts/bootstrap.sh -p all,linux
 
       - name: Build
-        run: gateway/chip-tool-gw/build.sh connectedhomeip "$PWD/out"
+        run: forwarder/chip-tool-remote/build.sh connectedhomeip "$PWD/out"
 
       - name: Package
         run: |
           name=${GITHUB_REF_NAME//\//-}
-          [[ $GITHUB_REF == refs/tags/v* ]] || name=$(git -C gateway rev-parse --short HEAD)
+          [[ $GITHUB_REF == refs/tags/v* ]] || name=$(git -C forwarder rev-parse --short HEAD)
           # A release's tag is the component's version: the firmware names it
           # as the client to use (matter.connect).
           if [[ $GITHUB_REF == refs/tags/v* ]]; then
-            version=$(sed -n 's/^version: *"\(.*\)"/\1/p' gateway/components/esp32_matter_gateway/idf_component.yml)
+            version=$(sed -n 's/^version: *"\(.*\)"/\1/p' forwarder/components/chip_tool_forwarder/idf_component.yml)
             [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "tag $GITHUB_REF_NAME, component version $version"; exit 1; }
           fi
           # The production PAA roots from the DCL, as of this build; if it can't
@@ -96,12 +96,12 @@ jobs:
             tail -2 dcl-paa.log
             sleep 15
           done
-          PAA_PRODUCTION=$paa gateway/chip-tool-gw/package.sh connectedhomeip out "$name" dist
-          mkdir -p dist/host && strip -o dist/host/mgw-host out/mgw-host
+          PAA_PRODUCTION=$paa forwarder/chip-tool-remote/package.sh connectedhomeip out "$name" dist
+          mkdir -p dist/host && strip -o dist/host/forwarder-host out/forwarder-host
 
       - uses: actions/upload-artifact@v4
         with:
-          name: chip-tool-gw
+          name: chip-tool-remote
           path: dist
           retention-days: 14
 
@@ -121,26 +121,26 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: chip-tool-gw
+          name: chip-tool-remote
           path: dist
 
-      # The packaged binary runs with only its bundled lib/; mgw-host (for the
+      # The packaged binary runs with only its bundled lib/; forwarder-host (for the
       # tests only) needs the same libraries.
-      - name: Run the packaged chip-tool-gw
+      - name: Run the packaged chip-tool-remote
         run: |
-          tar -C dist -xzf dist/chip-tool-gw-*-linux-x86_64.tgz
-          (cd dist && sha256sum -c chip-tool-gw-*-linux-x86_64.tgz.sha256)
-          bundle=$(ls -d dist/chip-tool-gw-*/)
-          LD_LIBRARY_PATH=$bundle/lib "$bundle/bin/chip-tool-gw" 2>&1 | head -5
+          tar -C dist -xzf dist/chip-tool-remote-*-linux-x86_64.tgz
+          (cd dist && sha256sum -c chip-tool-remote-*-linux-x86_64.tgz.sha256)
+          bundle=$(ls -d dist/chip-tool-remote-*/)
+          LD_LIBRARY_PATH=$bundle/lib "$bundle/bin/chip-tool-remote" 2>&1 | head -5
           ls "$bundle/paa" | wc -l
 
-      # The packaged chip-tool-gw, beside mgw-host (CHIP_TOOL_GW_OUT has both).
+      # The packaged chip-tool-remote, beside forwarder-host (CHIP_TOOL_REMOTE_OUT has both).
       - name: Stream tests
         run: |
-          bundle=$(ls -d "$PWD"/dist/chip-tool-gw-*/)
-          chmod +x dist/host/mgw-host
-          ln -sf "$bundle/bin/chip-tool-gw" dist/host/chip-tool-gw
-          LD_LIBRARY_PATH=$bundle/lib CHIP_TOOL_GW_OUT=$PWD/dist/host \
+          bundle=$(ls -d "$PWD"/dist/chip-tool-remote-*/)
+          chmod +x dist/host/forwarder-host
+          ln -sf "$bundle/bin/chip-tool-remote" dist/host/chip-tool-remote
+          LD_LIBRARY_PATH=$bundle/lib CHIP_TOOL_REMOTE_OUT=$PWD/dist/host \
             python -m unittest discover -s tests -p 'test_stream.py' -v
 
   release:
@@ -153,20 +153,20 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: chip-tool-gw
+          name: chip-tool-remote
           path: dist
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tgz=$(ls dist/chip-tool-gw-*-linux-x86_64.tgz)
+          tgz=$(ls dist/chip-tool-remote-*-linux-x86_64.tgz)
           paa=$(tar -xzOf "$tgz" --wildcards '*/paa/SOURCE')
           cat > notes.md <<EOF
-          - chip-tool-gw for Linux x86-64, built against connectedhomeip ${CHIP_SHA:0:8}.
+          - chip-tool-remote for Linux x86-64, built against connectedhomeip ${CHIP_SHA:0:8}.
             Check the download with its .sha256.
           - PAA roots: $paa.
-          - The component at this tag (components/esp32_matter_gateway) names this
+          - The component at this tag (components/chip_tool_forwarder) names this
             release as its client in matter.connect.
           EOF
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \

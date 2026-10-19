@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""chip-tool-gw's stream client (chip-tool-gw/gateway),
-against a scripted fake gateway written from core/mgw_proto.h, through a CONNECT
-proxy, and against mgw-host (the gateway's server and relay, on the host). No
+"""chip-tool-remote's stream client (chip-tool-remote/forwarder),
+against a scripted fake forwarder written from core/ctf_proto.h, through a CONNECT
+proxy, and against forwarder-host (the forwarder's server and relay, on the host). No
 device.
 
-Needs a chip-tool-gw build: set CHIP_TOOL_GW_OUT to build.sh's OUT_DIR (with
-chip-tool-gw and mgw-host in it). Needs Python 3.13 or later, for ssl's PSK
+Needs a chip-tool-remote build: set CHIP_TOOL_REMOTE_OUT to build.sh's OUT_DIR (with
+chip-tool-remote and forwarder-host in it). Needs Python 3.13 or later, for ssl's PSK
 callbacks. Skips without either. test_dead_stream takes about 65 s."""
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-PROTO = (ROOT / "components/esp32_matter_gateway/core/mgw_proto.h").read_text()
-OUT = Path(os.environ.get("CHIP_TOOL_GW_OUT", ""))
-CLIENT = OUT / "chip-tool-gw"
-HOST_BIN = OUT / "mgw-host"
+PROTO = (ROOT / "components/chip_tool_forwarder/core/ctf_proto.h").read_text()
+OUT = Path(os.environ.get("CHIP_TOOL_REMOTE_OUT", ""))
+CLIENT = OUT / "chip-tool-remote"
+HOST_BIN = OUT / "forwarder-host"
 
 
 def proto_const(name: str) -> int:
@@ -58,7 +58,7 @@ EVENT_ICD_ACTIVE = proto_const("kEventIcdActive")
 
 SECRET = bytes(range(32))
 CONNECT_FILES = itertools.count()
-TMP = Path(tempfile.mkdtemp(prefix="mgw-stream-"))
+TMP = Path(tempfile.mkdtemp(prefix="ctf-stream-"))
 
 
 def tls_psk(secret: bytes) -> bytes:
@@ -137,14 +137,14 @@ class Conn:
         socket.socket.shutdown(self.s, socket.SHUT_RDWR)  # the TCP socket under TLS
 
 
-class FakeGateway:
+class FakeForwarder:
     """One listening socket; each connection: TLS 1.2 ECDHE-PSK with the PSK
-    from secret (mgw_proto.h), then frames.
+    from secret (ctf_proto.h), then frames.
 
     on_call(conn, name, params) -> result dict (sent as the call's result) or
     None (never answered). pong=False: ignore the client's pings. tls=False:
-    a gateway without TLS (it answers the ClientHello with bad_frame). alpn:
-    the protocol the gateway speaks. close_on_open: drop the stream on a
+    a forwarder without TLS (it answers the ClientHello with bad_frame). alpn:
+    the protocol the forwarder speaks. close_on_open: drop the stream on a
     session request instead of refusing it."""
 
     def __init__(self, secret: bytes = SECRET, on_call=None, pong: bool = True, close_after_result: bool = False,
@@ -285,7 +285,7 @@ class ConnectProxy:
             try:
                 up = socket.create_connection((host.strip("[]"), int(port)), timeout=15)
             except (OSError, ValueError):
-                c.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                c.sendall(b"HTTP/1.1 502 Bad Forwarder\r\nContent-Length: 0\r\n\r\n")
             else:
                 up.settimeout(None)
                 c.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -306,15 +306,15 @@ class ConnectProxy:
 
 def client(args: str, gw: str, secret: bytes, timeout: float = 60, env: dict | None = None,
            stdin: str | None = None) -> tuple[int, str, float]:
-    """chip-tool-gw with a connect file for gw (host:port, or proxy:host:port) and secret."""
+    """chip-tool-remote with a connect file for gw (host:port, or proxy:host:port) and secret."""
     via_proxy = gw.startswith("proxy:")
     conn = connect_file(f"connect-{next(CONNECT_FILES)}.json",
                         {"endpoint": gw.removeprefix("proxy:"), "secret": secret.hex()})
-    e = dict(os.environ, MATTER_GW_CONNECT_FILE=conn, **(env or {}))
-    e.pop("MATTER_GW", None)
+    e = dict(os.environ, CHIP_TOOL_REMOTE_CONNECT_FILE=conn, **(env or {}))
+    e.pop("CHIP_TOOL_REMOTE_TARGET", None)
     if via_proxy:
-        e["MATTER_GW"] = "proxy"
-    for k in ("MATTER_GW_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        e["CHIP_TOOL_REMOTE_TARGET"] = "proxy"
+    for k in ("CHIP_TOOL_REMOTE_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
         if k not in (env or {}):
             e.pop(k, None)
     store = TMP / "cloud"
@@ -340,11 +340,11 @@ def call_line(out: str) -> dict:
 def setUpModule():
     if not hasattr(ssl.SSLContext, "set_psk_server_callback"):
         raise unittest.SkipTest("needs Python 3.13+ (ssl PSK callbacks)")
-    if not os.environ.get("CHIP_TOOL_GW_OUT"):
-        raise unittest.SkipTest("set CHIP_TOOL_GW_OUT to a chip-tool-gw build (chip-tool-gw/build.sh)")
+    if not os.environ.get("CHIP_TOOL_REMOTE_OUT"):
+        raise unittest.SkipTest("set CHIP_TOOL_REMOTE_OUT to a chip-tool-remote build (chip-tool-remote/build.sh)")
     for b in (CLIENT, HOST_BIN):
         if not os.access(b, os.X_OK):
-            raise unittest.SkipTest(f"{b} not built (chip-tool-gw/build.sh)")
+            raise unittest.SkipTest(f"{b} not built (chip-tool-remote/build.sh)")
 
 
 def tearDownModule():
@@ -360,28 +360,28 @@ class Stream(unittest.TestCase):
             self.gw.close()
 
     def start(self, **kw) -> str:
-        self.gw = FakeGateway(**kw)
+        self.gw = FakeForwarder(**kw)
         return f"127.0.0.1:{self.gw.port}"
 
     def test_call(self):
         gw = self.start(on_call=lambda c, n, p: {"ok": True, "payload": {"name": n, "params": p}})
-        rc, out, _ = client('gateway call matter.gateway_status --params {"a":1}', gw, SECRET)
+        rc, out, _ = client('forwarder call matter.gateway_status --params {"a":1}', gw, SECRET)
         self.assertEqual(rc, 0, out[-1500:])
         self.assertEqual(call_line(out)["payload"], {"name": "matter.gateway_status", "params": {"a": 1}})
         self.assertNotIn(SECRET.hex(), out)
 
     def test_error_result_fails_the_command(self):
         gw = self.start(on_call=lambda c, n, p: {"ok": False, "error": {"code": "busy", "message": "x"}})
-        rc, out, _ = client("gateway call matter.nodes", gw, SECRET)
+        rc, out, _ = client("forwarder call matter.nodes", gw, SECRET)
         self.assertNotEqual(rc, 0)
         self.assertEqual(call_line(out)["error"]["code"], "busy")
 
     def test_call_without_an_answer(self):
         # the stream stays up (pongs), the call alone times out and says so
         gw = self.start(on_call=lambda c, n, p: None)
-        rc, out, t = client("gateway call matter.nodes --call-timeout 3", gw, SECRET)
+        rc, out, t = client("forwarder call matter.nodes --call-timeout 3", gw, SECRET)
         self.assertNotEqual(rc, 0)
-        self.assertIn("gateway call matter.nodes: no answer from the gateway in time", out)
+        self.assertIn("forwarder call matter.nodes: no answer from the forwarder in time", out)
         self.assertLess(t, 30)
 
     def test_stream_dropped_during_a_call(self):
@@ -390,46 +390,46 @@ class Stream(unittest.TestCase):
             return None
 
         gw = self.start(on_call=on_call)
-        rc, out, t = client("gateway call matter.nodes", gw, SECRET)
+        rc, out, t = client("forwarder call matter.nodes", gw, SECRET)
         self.assertNotEqual(rc, 0)
-        self.assertIn("gateway call matter.nodes: the stream dropped", out)
+        self.assertIn("forwarder call matter.nodes: the stream dropped", out)
         self.assertLess(t, 30)
 
     def test_wrong_secret(self):
         gw = self.start()
-        rc, out, t = client("gateway call matter.gateway_status", gw, bytes(32))
+        rc, out, t = client("forwarder call matter.gateway_status", gw, bytes(32))
         self.assertNotEqual(rc, 0)
-        self.assertIn("the gateway does not know this secret", out)
-        self.assertIn("get the gateway's current endpoint and secret again", out)  # the hint
+        self.assertIn("the forwarder does not know this secret", out)
+        self.assertIn("get the forwarder's current endpoint and secret again", out)  # the hint
         self.assertEqual(self.gw.conns, 0)
         self.assertEqual(self.gw.auth_failures, 1)
         self.assertLess(t, 20)
 
-    def test_gateway_without_tls(self):
+    def test_forwarder_without_tls(self):
         gw = self.start(tls=False)
-        rc, out, t = client("gateway call matter.gateway_status", gw, SECRET)
+        rc, out, t = client("forwarder call matter.gateway_status", gw, SECRET)
         self.assertNotEqual(rc, 0)
         self.assertIn("firmware without TLS", out)
         self.assertIn("update the older one", out)
         self.assertLess(t, 20)
 
     def test_other_protocol_version(self):
-        # a gateway of another version: the same secret and PSK identity, so
+        # a forwarder of another version: the same secret and PSK identity, so
         # only the ALPN differs, and the client says so (not "unknown secret")
         gw = self.start(alpn=LABEL + "/99")
-        rc, out, _ = client("gateway call matter.gateway_status", gw, SECRET)
+        rc, out, _ = client("forwarder call matter.gateway_status", gw, SECRET)
         self.assertNotEqual(rc, 0)
-        self.assertIn("the gateway speaks another protocol version", out)
+        self.assertIn("the forwarder speaks another protocol version", out)
         self.assertIn("update the older one", out)  # the hint
         self.assertNotIn("does not know this secret", out)
         self.assertEqual(self.gw.auth_failures, 0)
         self.assertEqual(self.gw.conns, 1)  # TLS itself worked
 
     def test_bad_settings(self):
-        rc, out, _ = client("gateway call matter.gateway_status", "tailcat:x", SECRET)
+        rc, out, _ = client("forwarder call matter.gateway_status", "tailcat:x", SECRET)
         self.assertIn("must be host:port", out)
-        rc, out, t = client("gateway call matter.gateway_status", f"127.0.0.1:{free_port()}", SECRET)
-        self.assertIn("can't connect to the gateway", out)
+        rc, out, t = client("forwarder call matter.gateway_status", f"127.0.0.1:{free_port()}", SECRET)
+        self.assertIn("can't connect to the forwarder", out)
         self.assertIn("get its current endpoint and secret again and rewrite connect.json", out)  # the hint
 
     def test_open_refused_fails_fast(self):
@@ -454,7 +454,7 @@ class Stream(unittest.TestCase):
             return {"ok": True, "payload": {}}
 
         gw = self.start(on_call=on_call)
-        rc, out, _ = client("gateway call matter.commission", gw, SECRET)
+        rc, out, _ = client("forwarder call matter.commission", gw, SECRET)
         self.assertIn("signed", got, out[-1500:])
         return got["signed"], out
 
@@ -471,14 +471,14 @@ class Stream(unittest.TestCase):
         req, status, result = struct.unpack(">HHH", signed)
         self.assertEqual((req, status), (7, ERR_ATTESTATION))
         self.assertNotEqual(result, 0)
-        self.assertIn("Gateway attestation: device VID 0xfff1 PID 0x8000", out)
-        self.assertIn(f"Gateway attestation: refused ({result})", out)
+        self.assertIn("Forwarder attestation: device VID 0xfff1 PID 0x8000", out)
+        self.assertIn(f"Forwarder attestation: refused ({result})", out)
 
     def test_sign_device_needs_a_verified_attestation(self):
         signed, out = self.sign_case(1, 5, 1, [b"x", b"y", os.urandom(32), os.urandom(32), b"\x30\x00", b"\x30\x00"])
         self.assertEqual(struct.unpack(">HH", signed), (7, ERR_ATTESTATION))
         self.assertIn("no verified attestation for this device", out)
-        self.assertNotIn("Gateway signer: signed", out)
+        self.assertNotIn("Forwarder signer: signed", out)
 
     def test_short_sign_request_answered(self):
         signed, out = self.sign_case(1, 5, 1, [b"x"])  # five fields missing
@@ -492,13 +492,13 @@ class Stream(unittest.TestCase):
             return {"ok": True, "payload": {}}
 
         gw = self.start(on_call=on_call)
-        rc, out, _ = client("gateway call matter.gateway_status", gw, SECRET)
+        rc, out, _ = client("forwarder call matter.gateway_status", gw, SECRET)
         self.assertEqual(rc, 0, out[-1500:])
         self.assertIn("checked in (sleepy device awake)", out)
 
-    def test_reconnect_after_the_gateway_closes(self):
+    def test_reconnect_after_the_forwarder_closes(self):
         gw = self.start(close_after_result=True)
-        script = "gateway call matter.gateway_status\ndelay sleep 1000\ngateway call matter.nodes\nquit\n"
+        script = "forwarder call matter.gateway_status\ndelay sleep 1000\nforwarder call matter.nodes\nquit\n"
         rc, out, _ = client("interactive start", gw, SECRET, stdin=script)
         names = [r["payload"]["name"] for r in results(out)]
         self.assertEqual(names, ["matter.gateway_status", "matter.nodes"], out[-2000:])
@@ -506,7 +506,7 @@ class Stream(unittest.TestCase):
 
     def test_dead_stream(self):
         gw = self.start(on_call=lambda c, n, p: None, pong=False)
-        rc, out, t = client("gateway call matter.gateway_status --call-timeout 200", gw, SECRET,
+        rc, out, t = client("forwarder call matter.gateway_status --call-timeout 200", gw, SECRET,
                             timeout=150)
         self.assertNotEqual(rc, 0)
         self.assertIn("no answer for 60 s; dropping the stream", out)
@@ -516,7 +516,7 @@ class Stream(unittest.TestCase):
 class Proxy(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.gw = FakeGateway()
+        cls.gw = FakeForwarder()
         cls.proxy = ConnectProxy("agent:pw-123")
 
     @classmethod
@@ -524,8 +524,8 @@ class Proxy(unittest.TestCase):
         cls.proxy.close()
         cls.gw.close()
 
-    def run_via(self, url: str, var: str = "MATTER_GW_PROXY"):
-        return client("gateway call matter.gateway_status", f"proxy:127.0.0.1:{self.gw.port}",
+    def run_via(self, url: str, var: str = "CHIP_TOOL_REMOTE_PROXY"):
+        return client("forwarder call matter.gateway_status", f"proxy:127.0.0.1:{self.gw.port}",
                       SECRET, env={var: url})
 
     def test_connect_with_basic_auth(self):
@@ -542,31 +542,31 @@ class Proxy(unittest.TestCase):
         rc, out, _ = self.run_via(f"http://agent:nope@127.0.0.1:{self.proxy.port}")
         self.assertNotEqual(rc, 0)
         self.assertIn(f"the CONNECT proxy refused 127.0.0.1:{self.gw.port}: 407", out)
-        self.assertIn("HTTPS_PROXY or MATTER_GW_PROXY", out)  # the hint
+        self.assertIn("HTTPS_PROXY or CHIP_TOOL_REMOTE_PROXY", out)  # the hint
         self.assertNotIn("nope", out)
 
     def test_no_proxy_configured(self):
-        rc, out, _ = client("gateway call matter.gateway_status", f"proxy:127.0.0.1:{self.gw.port}",
+        rc, out, _ = client("forwarder call matter.gateway_status", f"proxy:127.0.0.1:{self.gw.port}",
                             SECRET)
         self.assertIn("no CONNECT proxy configured", out)
 
 
 def run_env(cmd: list[str], env: dict, timeout: float = 60) -> tuple[int, str]:
-    """cmd with only env's gateway and proxy settings."""
+    """cmd with only env's forwarder and proxy settings."""
     e = {k: v for k, v in os.environ.items()
-         if not k.startswith("MATTER_GW") and not k.startswith("MGW_") and k.lower() not in ("https_proxy", "http_proxy")}
+         if not k.startswith("CHIP_TOOL_REMOTE_") and not k.startswith("CHIP_TOOL_REMOTE_") and k.lower() not in ("https_proxy", "http_proxy")}
     e.update(env)
     p = subprocess.run(cmd, env=e, capture_output=True, text=True, timeout=timeout)
     return p.returncode, p.stdout + p.stderr
 
 
 class ConnectFile(unittest.TestCase):
-    """MATTER_GW_CONNECT_FILE: the gateway's connect payload gives the endpoint and
-    the secret, alone or with MATTER_GW=proxy; and mgw.sh, which uses it."""
+    """CHIP_TOOL_REMOTE_CONNECT_FILE: the forwarder's connect payload gives the endpoint and
+    the secret, alone or with CHIP_TOOL_REMOTE_TARGET=proxy; and chip-tool-remote.sh, which uses it."""
 
     @classmethod
     def setUpClass(cls):
-        cls.gw = FakeGateway(on_call=lambda c, n, p: {"ok": True, "payload": {"name": n}})
+        cls.gw = FakeForwarder(on_call=lambda c, n, p: {"ok": True, "payload": {"name": n}})
         cls.proxy = ConnectProxy("agent:pw-123")
         cls.payload = {"endpoint": f"127.0.0.1:{cls.gw.port}", "secret": SECRET.hex(), "client": "v0.1.0"}
 
@@ -578,30 +578,31 @@ class ConnectFile(unittest.TestCase):
     def call(self, env: dict) -> tuple[int, str]:
         store = TMP / "cloud"
         store.mkdir(exist_ok=True)
-        return run_env([str(CLIENT), "gateway", "call", "matter.gateway_status", "--storage-directory", str(store)],
+        return run_env([str(CLIENT), "forwarder", "call", "matter.gateway_status", "--storage-directory", str(store)],
                        env)
 
     def test_endpoint_and_secret_from_the_file(self):
-        rc, out = self.call({"MATTER_GW_CONNECT_FILE": connect_file("c.json", self.payload)})
+        rc, out = self.call({"CHIP_TOOL_REMOTE_CONNECT_FILE": connect_file("c.json", self.payload)})
         self.assertEqual(rc, 0, out[-1500:])
         self.assertEqual(call_line(out)["payload"], {"name": "matter.gateway_status"})
         self.assertNotIn(SECRET.hex(), out)
 
     def test_through_the_proxy(self):
-        rc, out = self.call({"MATTER_GW_CONNECT_FILE": connect_file("c.json", self.payload), "MATTER_GW": "proxy",
-                             "MATTER_GW_PROXY": f"http://agent:pw-123@127.0.0.1:{self.proxy.port}"})
+        rc, out = self.call({"CHIP_TOOL_REMOTE_CONNECT_FILE": connect_file("c.json", self.payload),
+                             "CHIP_TOOL_REMOTE_TARGET": "proxy",
+                             "CHIP_TOOL_REMOTE_PROXY": f"http://agent:pw-123@127.0.0.1:{self.proxy.port}"})
         self.assertEqual(rc, 0, out[-1500:])
         self.assertIn("through the CONNECT proxy", out)
 
-    def test_gateway_needs_the_file(self):
+    def test_forwarder_needs_the_file(self):
         # not plain chip-tool behind the user's back
-        rc, out = self.call({"MATTER_GW": self.payload["endpoint"]})
+        rc, out = self.call({"CHIP_TOOL_REMOTE_TARGET": self.payload["endpoint"]})
         self.assertEqual(rc, 2, out[-1500:])
-        self.assertIn("MATTER_GW needs MATTER_GW_CONNECT_FILE", out)
+        self.assertIn("CHIP_TOOL_REMOTE_TARGET needs CHIP_TOOL_REMOTE_CONNECT_FILE", out)
 
     def test_another_address(self):
-        rc, out = self.call({"MATTER_GW_CONNECT_FILE": connect_file("c.json", {**self.payload, "endpoint": "127.0.0.1:1"}),
-                             "MATTER_GW": self.payload["endpoint"]})
+        rc, out = self.call({"CHIP_TOOL_REMOTE_CONNECT_FILE": connect_file("c.json", {**self.payload, "endpoint": "127.0.0.1:1"}),
+                             "CHIP_TOOL_REMOTE_TARGET": self.payload["endpoint"]})
         self.assertEqual(rc, 0, out[-1500:])
 
     def test_malformed_file_refused(self):
@@ -609,52 +610,53 @@ class ConnectFile(unittest.TestCase):
                            ("not-hex.json", json.dumps({**self.payload, "secret": "x" * 64})),
                            ("not-json.json", "endpoint=127.0.0.1:1")):
             (TMP / name).write_text(text)
-            rc, out = self.call({"MATTER_GW_CONNECT_FILE": str(TMP / name)})
+            rc, out = self.call({"CHIP_TOOL_REMOTE_CONNECT_FILE": str(TMP / name)})
             self.assertEqual(rc, 2, f"{name}: {out[-1500:]}")
-            self.assertIn("MATTER_GW_CONNECT_FILE", out, name)
-        rc, out = self.call({"MATTER_GW_CONNECT_FILE": str(TMP / "missing.json")})
+            self.assertIn("CHIP_TOOL_REMOTE_CONNECT_FILE", out, name)
+        rc, out = self.call({"CHIP_TOOL_REMOTE_CONNECT_FILE": str(TMP / "missing.json")})
         self.assertEqual(rc, 2, out[-1500:])
-        self.assertIn("can't read MATTER_GW_CONNECT_FILE", out)
+        self.assertIn("can't read CHIP_TOOL_REMOTE_CONNECT_FILE", out)
 
-    def test_mgw_sh(self):
-        # The release layout: bin/chip-tool-gw, mgw.sh, connect.json; mgw.sh
+    def test_chip_tool_remote_sh(self):
+        # The release layout: bin/chip-tool-remote, chip-tool-remote.sh, connect.json; chip-tool-remote.sh
         # makes no copy of the secret.
-        d = TMP / "mgw"
+        d = TMP / "chip-tool-remote"
         (d / "bin").mkdir(parents=True, exist_ok=True)
-        if not (d / "bin/chip-tool-gw").exists():
-            (d / "bin/chip-tool-gw").symlink_to(CLIENT)
-        shutil.copy(ROOT / "chip-tool-gw/mgw.sh", d / "mgw.sh")
-        connect_file("mgw/connect.json", self.payload)
-        for env in ({"MGW_VIA_PROXY": "0"},
-                    {"HTTPS_PROXY": f"http://agent:pw-123@127.0.0.1:1", "MGW_PROXY_PORT": str(self.proxy.port)}):
-            rc, out = run_env([str(d / "mgw.sh"), "gateway", "call", "matter.gateway_status"], env)
+        if not (d / "bin/chip-tool-remote").exists():
+            (d / "bin/chip-tool-remote").symlink_to(CLIENT)
+        shutil.copy(ROOT / "chip-tool-remote/chip-tool-remote.sh", d / "chip-tool-remote.sh")
+        connect_file("chip-tool-remote/connect.json", self.payload)
+        for env in ({"CHIP_TOOL_REMOTE_VIA_PROXY": "0"},
+                    {"HTTPS_PROXY": f"http://agent:pw-123@127.0.0.1:1",
+                     "CHIP_TOOL_REMOTE_PROXY_PORT": str(self.proxy.port)}):
+            rc, out = run_env([str(d / "chip-tool-remote.sh"), "forwarder", "call", "matter.gateway_status"], env)
             self.assertEqual(rc, 0, out[-1500:])
             self.assertEqual(call_line(out)["payload"], {"name": "matter.gateway_status"})
             self.assertNotIn(SECRET.hex(), out)
             self.assertNotIn("pw-123", out)
-        self.assertEqual(sorted(p.name for p in d.iterdir()), ["bin", "connect.json", "mgw.sh", "storage"])
+        self.assertEqual(sorted(p.name for p in d.iterdir()), ["bin", "chip-tool-remote.sh", "connect.json", "storage"])
 
 
 class NotOffered(unittest.TestCase):
-    """Through a gateway, chip-tool's pairing, discover, dcl and groupsettings
+    """Through a forwarder, chip-tool's pairing, discover, dcl and groupsettings
     sets don't exist (they can't work through it), in interactive mode too;
-    plain chip-tool still has them. Nothing reaches the gateway."""
+    plain chip-tool still has them. Nothing reaches the forwarder."""
 
     @classmethod
     def setUpClass(cls):
-        cls.gw = FakeGateway(on_call=lambda c, n, p: {"ok": True, "payload": {}})
+        cls.gw = FakeForwarder(on_call=lambda c, n, p: {"ok": True, "payload": {}})
         cls.conn = connect_file("not-offered.json", {"endpoint": f"127.0.0.1:{cls.gw.port}", "secret": SECRET.hex()})
 
     @classmethod
     def tearDownClass(cls):
         cls.gw.close()
 
-    def run_line(self, line: str, gateway: bool = True, stdin: str | None = None) -> tuple[int, str]:
+    def run_line(self, line: str, forwarder: bool = True, stdin: str | None = None) -> tuple[int, str]:
         store = TMP / "cloud"
         store.mkdir(exist_ok=True)
-        e = {k: v for k, v in os.environ.items() if not k.startswith("MATTER_GW")}
-        if gateway:
-            e["MATTER_GW_CONNECT_FILE"] = self.conn
+        e = {k: v for k, v in os.environ.items() if not k.startswith("CHIP_TOOL_REMOTE_")}
+        if forwarder:
+            e["CHIP_TOOL_REMOTE_CONNECT_FILE"] = self.conn
         p = subprocess.run([str(CLIENT), *line.split(), "--storage-directory", str(store)], env=e, input=stdin,
                            capture_output=True, text=True, timeout=60)
         return p.returncode, p.stdout + p.stderr
@@ -672,30 +674,30 @@ class NotOffered(unittest.TestCase):
         self.assertIn("Unknown cluster or command set: pairing", out, out[-1500:])
         self.assertEqual(self.gw.opens, [])
 
-    def test_offered_without_a_gateway(self):
+    def test_offered_without_a_forwarder(self):
         # plain chip-tool: pairing exists (and checks its own arguments)
-        rc, out = self.run_line("pairing code", gateway=False)
+        rc, out = self.run_line("pairing code", forwarder=False)
         self.assertEqual(rc, 1, out[-1500:])
         self.assertIn("InitArgs: ", out)
         self.assertNotIn("Unknown cluster or command set", out)
 
 
-class MgwHost(unittest.TestCase):
-    """chip-tool-gw against the gateway's server (core/) in mgw-host."""
+class ForwarderHost(unittest.TestCase):
+    """chip-tool-remote against the forwarder's server (core/) in forwarder-host."""
 
     @classmethod
     def setUpClass(cls):
         cls.port = free_port()
         store = TMP / "host"
         store.mkdir(exist_ok=True)
-        cls.log = open(TMP / "mgw-host.log", "w+")
+        cls.log = open(TMP / "forwarder-host.log", "w+")
         conn = connect_file("host.json", {"endpoint": f"127.0.0.1:{cls.port}", "secret": SECRET.hex()})
-        cls.p = subprocess.Popen([str(HOST_BIN), "gateway", "serve", conn, "--stats-interval", "0",
+        cls.p = subprocess.Popen([str(HOST_BIN), "forwarder", "serve", conn, "--stats-interval", "0",
                                   "--storage-directory", str(store)], stdout=cls.log, stderr=subprocess.STDOUT)
         deadline = time.time() + 30
-        while "gateway serve: fabric index" not in (TMP / "mgw-host.log").read_text():
+        while "forwarder serve: fabric index" not in (TMP / "forwarder-host.log").read_text():
             if time.time() > deadline or cls.p.poll() is not None:
-                raise RuntimeError("mgw-host did not start: " + (TMP / "mgw-host.log").read_text()[-1500:])
+                raise RuntimeError("forwarder-host did not start: " + (TMP / "forwarder-host.log").read_text()[-1500:])
             time.sleep(0.3)
 
     @classmethod
@@ -706,11 +708,11 @@ class MgwHost(unittest.TestCase):
 
     def server_log(self) -> str:
         self.log.flush()
-        return (TMP / "mgw-host.log").read_text(errors="replace")
+        return (TMP / "forwarder-host.log").read_text(errors="replace")
 
     def test_handshake_and_call(self):
-        # mgw-host relays sessions only: no gateway commands
-        rc, out, _ = client("gateway call matter.gateway_status", f"127.0.0.1:{self.port}", SECRET)
+        # forwarder-host relays sessions only: no forwarder commands
+        rc, out, _ = client("forwarder call matter.gateway_status", f"127.0.0.1:{self.port}", SECRET)
         self.assertEqual(call_line(out)["error"]["code"], "unsupported", out[-1500:])
 
     def test_refuses_a_bad_connect_file(self):
@@ -724,16 +726,16 @@ class MgwHost(unittest.TestCase):
                  "the secret in the connect file must be 32-128 hex digits")):
             if text is not None:
                 (TMP / name).write_text(text)
-            rc, out = run_env([str(HOST_BIN), "gateway", "serve", str(TMP / name), "--stats-interval", "0",
+            rc, out = run_env([str(HOST_BIN), "forwarder", "serve", str(TMP / name), "--stats-interval", "0",
                                "--storage-directory", str(store)], {})
             self.assertNotEqual(rc, 0, f"{name}: {out[-1500:]}")
             self.assertIn(want, out, name)
             self.assertNotIn(SECRET.hex(), out, name)
 
     def test_wrong_secret(self):
-        rc, out, _ = client("gateway call matter.gateway_status", f"127.0.0.1:{self.port}",
+        rc, out, _ = client("forwarder call matter.gateway_status", f"127.0.0.1:{self.port}",
                             bytes(32))
-        self.assertIn("the gateway does not know this secret", out)
+        self.assertIn("the forwarder does not know this secret", out)
         self.assertIn("a client with an unknown secret", self.server_log())
 
     def test_slow_handshake_dropped(self):
@@ -755,11 +757,11 @@ class MgwHost(unittest.TestCase):
             self.assertTrue(8 < time.time() - t0 < 16, time.time() - t0)
 
     def test_over_the_limit_closed(self):
-        # connections that never handshake hold every slot (mgw-host: 4)
+        # connections that never handshake hold every slot (forwarder-host: 4)
         held = [socket.create_connection(("127.0.0.1", self.port)) for _ in range(4)]
         try:
             time.sleep(0.5)
-            rc, out, t = client("gateway call matter.gateway_status", f"127.0.0.1:{self.port}",
+            rc, out, t = client("forwarder call matter.gateway_status", f"127.0.0.1:{self.port}",
                                 SECRET)
             self.assertNotEqual(rc, 0)
             self.assertIn("closed the connection during the TLS handshake (busy", out)
@@ -768,16 +770,16 @@ class MgwHost(unittest.TestCase):
             for h in held:
                 h.close()
         time.sleep(0.5)
-        rc, out, _ = client("gateway call matter.gateway_status", f"127.0.0.1:{self.port}", SECRET)
+        rc, out, _ = client("forwarder call matter.gateway_status", f"127.0.0.1:{self.port}", SECRET)
         self.assertEqual(call_line(out)["error"]["code"], "unsupported", out[-1500:])
 
     def test_unknown_node_fails(self):
-        # mgw-host has no node policy (the gateway refuses at open): the open
+        # forwarder-host has no node policy (the forwarder refuses at open): the open
         # succeeds and the relay's CASE to the absent node times out
         rc, out, t = client("onoff read on-off 4242 1", f"127.0.0.1:{self.port}", SECRET,
                             timeout=120)
         self.assertNotEqual(rc, 0)
-        self.assertIn("Gateway: connected to", out)
+        self.assertIn("Forwarder: connected to", out)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ import sys
 
 # An input section's address, size and archive (the section's own name may be
 # on the line before).
-ENTRY = re.compile(r"0x[0-9a-f]+\s+(0x[0-9a-f]+)\s+\S*/lib(\S*esp32_matter_gateway)\.a\(")
+ENTRY = re.compile(r"0x[0-9a-f]+\s+(0x[0-9a-f]+)\s+\S*/lib(\S*chip_tool_forwarder)\.a\(")
 SECTION = re.compile(r"^(\.\S+)")
 
 
@@ -30,7 +30,7 @@ def main(path: str) -> int:
                 archive = m.group(2)
                 sizes[section] = sizes.get(section, 0) + int(m.group(1), 16)
     if archive is None:
-        print(f"{path}: no esp32_matter_gateway archive in the map")
+        print(f"{path}: no chip_tool_forwarder archive in the map")
         return 1
     psram, internal = sizes.get(".ext_ram.bss", 0), sizes.get(".dram0.bss", 0)
     print(f"lib{archive}.a: .bss {psram} bytes in PSRAM, {internal} in internal RAM")

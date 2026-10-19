@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# chip-tool-remote: upstream chip-tool's commands (chip-tool-utils, unmodified)
+# plus the client for the forwarder; forwarder-host: the forwarder relay
+# on a host (tests). The symlinks (build_overrides, third_party/connectedhomeip,
+# core) are made by build.sh.
+
+import("//build_overrides/build.gni")
+import("//build_overrides/chip.gni")
+
+config("forwarder_config") {
+  include_dirs = [
+    "forwarder",
+    "core",
+  ]
+}
+
+executable("chip-tool-remote") {
+  sources = [
+    "core/ctf_keys.cpp",
+    "core/ctf_proto.cpp",
+    "core/ctf_tls_openssl.cpp",
+    "forwarder/ForwarderClient.cpp",
+    "forwarder/ForwarderCommands.cpp",
+    "forwarder/ForwarderDial.cpp",
+    "forwarder/ForwarderConnectFile.cpp",
+    "forwarder/ForwarderSessions.cpp",
+    "forwarder/ForwarderSigner.cpp",
+    "forwarder/ForwarderStream.cpp",
+    "main.cpp",
+  ]
+  configs += [ ":forwarder_config" ]
+  deps = [
+    "${chip_root}/examples/chip-tool:chip-tool-utils",
+    "${chip_root}/src/platform/logging:stdio",
+  ]
+  output_dir = root_out_dir
+}
+
+executable("forwarder-host") {
+  sources = [
+    "core/ctf_keys.cpp",
+    "core/ctf_listener.cpp",
+    "core/ctf_proto.cpp",
+    "core/ctf_relay.cpp",
+    "core/ctf_server.cpp",
+    "core/ctf_tls_openssl.cpp",
+    "forwarder/ForwarderConnectFile.cpp",
+    "forwarder/ForwarderServeCommand.cpp",
+    "forwarder_host_main.cpp",
+  ]
+  configs += [ ":forwarder_config" ]
+  deps = [
+    "${chip_root}/examples/chip-tool:chip-tool-utils",
+    "${chip_root}/src/platform/logging:stdio",
+  ]
+  output_dir = root_out_dir
+}
+
+group("default") {
+  deps = [
+    ":chip-tool-remote",
+    ":forwarder-host",
+  ]
+}

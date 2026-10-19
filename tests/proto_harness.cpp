@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Host harness for the gateway stream protocol (components/esp32_matter_gateway/
-// core/mgw_proto.cpp, shared by the gateway and chip-tool-gw): framing, the
+// Host harness for the forwarder stream protocol (components/chip_tool_forwarder/
+// core/ctf_proto.cpp, shared by the forwarder and chip-tool-remote): framing, the
 // control messages and the length-prefixed fields. Run by tests/test_host.py.
 #include <stdio.h>
 #include <string.h>
 
-#include "mgw_proto.h"
+#include "ctf_proto.h"
 
-using namespace mgw;
+using namespace ctf;
 
 static int failures;
 #define CHECK(c)                                                                  \
@@ -127,9 +127,9 @@ static void messages()
 
     CloseMsg close, c2;
     close.cloudLsid = 3;
-    close.gwLsid    = 4;
+    close.fwdLsid    = 4;
     FixedRoundTrip(close, c2);
-    CHECK(c2.cloudLsid == 3 && c2.gwLsid == 4);
+    CHECK(c2.cloudLsid == 3 && c2.fwdLsid == 4);
 
     PingMsg ping, p2;
     ping.token = 0xdeadbeef;
@@ -246,6 +246,6 @@ int main()
         fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;
     }
-    puts("mgw_proto: ok");
+    puts("ctf_proto: ok");
     return 0;
 }

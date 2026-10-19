@@ -1,8 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# 8 MB: the gateway's app is about 3 MB; "matter" holds the fabric, the
-# devices and the gateway secret (the component's NVS partition).
-# Name,    Type, SubType, Offset,   Size
-nvs,       data, nvs,     0x9000,   0x6000,
-phy_init,  data, phy,     0xf000,   0x1000,
-factory,   app,  factory, 0x10000,  0x600000,
-matter,    data, nvs,     0x610000, 0x50000,

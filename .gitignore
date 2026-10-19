@@ -1,7 +1,7 @@
-# chip-tool-gw's build links (chip-tool-gw/build.sh)
-/chip-tool-gw/build_overrides
-/chip-tool-gw/third_party/
-/chip-tool-gw/core
+# chip-tool-remote's build links (chip-tool-remote/build.sh)
+/chip-tool-remote/build_overrides
+/chip-tool-remote/third_party/
+/chip-tool-remote/core
 # IDF builds of the example
 /examples/*/build*/
 /examples/*/managed_components/

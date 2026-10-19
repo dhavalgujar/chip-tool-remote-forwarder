@@ -33,14 +33,14 @@ jobs:
           persist-credentials: false
 
       - name: Build
-        working-directory: examples/gateway
+        working-directory: examples/forwarder
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
           idf.py -B build -DIDF_TARGET=esp32c5 -DSDKCONFIG=build/sdkconfig build
           idf.py -B build -DSDKCONFIG=build/sdkconfig size
-          python3 "$GITHUB_WORKSPACE/tests/check_psram_bss.py" build/matter_gateway_example.map
+          python3 "$GITHUB_WORKSPACE/tests/check_psram_bss.py" build/chip_tool_forwarder_example.map
 
-      # The component manager names the component dhavalgujar__esp32_matter_gateway
+      # The component manager names the component dhavalgujar__chip_tool_forwarder
       # (its archive too): the example, with the component from this commit.
       - name: Build as a managed component
         env:
@@ -49,25 +49,25 @@ jobs:
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
           app=$RUNNER_TEMP/app
-          cp -r examples/gateway "$app"
+          cp -r examples/forwarder "$app"
           rm -rf "$app/build" "$app/managed_components" "$app/dependencies.lock"
           sed -i '/EXTRA_COMPONENT_DIRS/d' "$app/CMakeLists.txt"
           cat > "$app/main/idf_component.yml" <<EOF
           dependencies:
-            dhavalgujar/esp32_matter_gateway:
+            dhavalgujar/chip_tool_forwarder:
               git: "$REPO"
-              path: "components/esp32_matter_gateway"
+              path: "components/chip_tool_forwarder"
               version: "$SHA"
           EOF
-          echo 'CONFIG_CHIP_PROJECT_CONFIG="managed_components/dhavalgujar__esp32_matter_gateway/CHIPProjectConfig.h"' \
+          echo 'CONFIG_CHIP_PROJECT_CONFIG="managed_components/dhavalgujar__chip_tool_forwarder/CHIPProjectConfig.h"' \
             > "$app/sdkconfig.managed"
           cd "$app"
           idf.py -B build -DIDF_TARGET=esp32c5 -DSDKCONFIG=build/sdkconfig \
             -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.managed" build
-          python3 "$GITHUB_WORKSPACE/tests/check_psram_bss.py" build/matter_gateway_example.map
+          python3 "$GITHUB_WORKSPACE/tests/check_psram_bss.py" build/chip_tool_forwarder_example.map
 
       # cJSON's sources come from the build's managed components.
       - name: Host tests
         run: |
-          CJSON_SOURCE_DIR=examples/gateway/managed_components/espressif__cjson/cJSON \
+          CJSON_SOURCE_DIR=examples/forwarder/managed_components/espressif__cjson/cJSON \
             python3 -m unittest discover -s tests -p 'test_host.py' -v

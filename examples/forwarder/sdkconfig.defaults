@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# What the forwarder needs, on any board with PSRAM and 8 MB of flash. The same
+# settings apply in an application of your own.
+
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_CJSON_NESTING_LIMIT=16
+
+# CHIP as a commissioner only (esp-matter's controller), over Bluetooth too
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_ENABLE_CHIP_CONTROLLER_BUILD=y
+CONFIG_ESP_MATTER_CONTROLLER_ENABLE=y
+CONFIG_ESP_MATTER_COMMISSIONER_ENABLE=y
+CONFIG_ESP_MATTER_ENABLE_MATTER_SERVER=n
+CONFIG_ENABLE_CHIP_SHELL=n
+CONFIG_WIFI_NETWORK_COMMISSIONING_DRIVER=n
+CONFIG_ENABLE_ESP32_BLE_CONTROLLER=y
+CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=n
+# The fabric's CA is chip-tool-remote's (forwarder_ca.cpp)
+CONFIG_CUSTOM_OPERATIONAL_CREDS_ISSUER=y
+# Relative to this project
+CONFIG_CHIP_PROJECT_CONFIG="../../components/chip_tool_forwarder/CHIPProjectConfig.h"
+CONFIG_CHIP_TASK_STACK_SIZE=15360
+# Pools above CHIP's and lwIP's defaults (tested with 26 devices; the defaults
+# themselves weren't measured):
+# - each relayed request in flight holds an exchange on the forwarder (CHIP: 8)
+CONFIG_MAX_EXCHANGE_CONTEXTS=48
+# - a burst of subscription reports or mDNS answers filled CHIP's queue (40)
+#   and crashed the forwarder; controller_queue_filter.cpp caps it at two thirds
+CONFIG_MAX_EVENT_QUEUE_SIZE=80
+# - sessions and retransmissions to every device (CHIP: 32; in PSRAM, 3 KB)
+CONFIG_NUM_TIMERS=128
+# - CHIP's UDP (IPv4 and IPv6, mDNS) and lwIP's sockets, beside the stream's
+#   listener and up to 8 TLS connections (CHIP: 8, lwIP: 10)
+CONFIG_NUM_UDP_ENDPOINTS=16
+CONFIG_LWIP_MAX_SOCKETS=16
+CONFIG_CHIP_FACTORY_NAMESPACE_PARTITION_LABEL="matter"
+CONFIG_CHIP_CONFIG_NAMESPACE_PARTITION_LABEL="matter"
+CONFIG_CHIP_COUNTERS_NAMESPACE_PARTITION_LABEL="matter"
+CONFIG_CHIP_KVS_NAMESPACE_PARTITION_LABEL="matter"
+
+# IPv6 for Matter, and routes to Thread devices through the border router
+CONFIG_LWIP_IPV6_AUTOCONFIG=y
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=6
+CONFIG_ENABLE_ROUTE_HOOK=y
+CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
+CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
+CONFIG_LWIP_TCPIP_CORE_LOCKING=y
+
+# CHIP's, esp-matter's and NimBLE's memory in PSRAM (the component's linker.lf.in)
+CONFIG_CHIP_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_ESP_MATTER_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# The forwarder stream: TLS 1.2 ECDHE-PSK with 4 KB records (core/ctf_tls_mbedtls.cpp)
+CONFIG_MBEDTLS_PSK_MODES=y
+CONFIG_MBEDTLS_KEY_EXCHANGE_ECDHE_PSK=y
+CONFIG_MBEDTLS_SSL_KEYING_MATERIAL_EXPORT=y
+CONFIG_MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH=y
+
+# CHIP's own logs: errors only (at INFO they hold up its thread on a UART
+# console); the relay's lines still show (core/ctf_log.h)
+CONFIG_CHIP_LOG_DEFAULT_LEVEL_ERROR=y
